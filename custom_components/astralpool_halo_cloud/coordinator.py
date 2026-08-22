@@ -10,6 +10,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CALLBACK_TYPE, CoreState, HomeAssistant, callback
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from pychlorinator_cloud.exceptions import (
@@ -55,6 +56,7 @@ class HaloCloudCoordinator(DataUpdateCoordinator[ChlorinatorLiveData]):
         self._last_connection_issue: str | None = None
         self._push_timer: CALLBACK_TYPE | None = None
         self._push_unseen: bool = False
+        self._push_error_logged: bool = False
         self.client.on_data = self._handle_client_data
         self.client.on_disconnect = self._handle_client_disconnect
         self.data = self.client.data
@@ -62,13 +64,24 @@ class HaloCloudCoordinator(DataUpdateCoordinator[ChlorinatorLiveData]):
     @callback
     def _handle_client_data(self, _: dict[str, Any]) -> None:
         """Throttle WebSocket data pushes to HA — at most once per second."""
-        if self._push_timer is None:
-            self._do_push()
-            self._push_timer = self.hass.async_call_later(
-                _PUSH_THROTTLE_SECONDS, self._push_timer_expired
-            )
-        else:
-            self._push_unseen = True
+        try:
+            if self._push_timer is None:
+                self._do_push()
+                self._push_timer = async_call_later(
+                    self.hass, _PUSH_THROTTLE_SECONDS, self._push_timer_expired
+                )
+            else:
+                self._push_unseen = True
+        except Exception:
+            # This runs on every inbound WebSocket frame, so an error here
+            # would otherwise emit a traceback per frame (~1/s) and bury
+            # every other message in the log. Report it once, then stay quiet.
+            if not self._push_error_logged:
+                self._push_error_logged = True
+                _LOGGER.exception(
+                    "Error handling WebSocket data push; "
+                    "further occurrences will be suppressed"
+                )
 
     @callback
     def _push_timer_expired(self, _now: Any) -> None:
@@ -76,8 +89,8 @@ class HaloCloudCoordinator(DataUpdateCoordinator[ChlorinatorLiveData]):
         if self._push_unseen:
             self._push_unseen = False
             self._do_push()
-            self._push_timer = self.hass.async_call_later(
-                _PUSH_THROTTLE_SECONDS, self._push_timer_expired
+            self._push_timer = async_call_later(
+                self.hass, _PUSH_THROTTLE_SECONDS, self._push_timer_expired
             )
 
     def _do_push(self) -> None:
