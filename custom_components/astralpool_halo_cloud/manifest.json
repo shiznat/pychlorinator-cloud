@@ -18,5 +18,5 @@
   "requirements": [
     "pychlorinator_cloud @ git+https://github.com/davidbell81/pychlorinator-cloud.git@main"
   ],
-  "version": "0.2.3"
+  "version": "0.2.4"
 }
