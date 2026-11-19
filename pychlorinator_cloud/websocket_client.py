@@ -102,6 +102,13 @@ class ChlorinatorLiveData:
     heater_on: bool = False
     heater_error: Optional[int] = None
 
+    # Solar (cmd 0x04b2 — SolarStateCharacteristic)
+    solar_setpoint_c: Optional[int] = None
+    solar_mode: Optional[str] = None  # Off, Auto, On
+    solar_season: Optional[str] = None  # Winter, Summer
+    solar_pump_state: bool = False
+    solar_flush_active: bool = False
+
     # Controller clock (cmd 0x0002 / 0x0003)
     controller_datetime: Optional[datetime.datetime] = None
     controller_weekday: Optional[int] = None
@@ -186,6 +193,8 @@ MODES = {0: "Off", 1: "Auto", 2: "On"}
 ACTION_CMD_ID = 0x01F4
 LIGHT_CMD_ID = 0x01F5
 HEATER_CMD_ID = 0x01F6
+SOLAR_CMD_ID = 0x01F7
+SOLAR_STATE_CMD_ID = 0x04B2
 TIME_CMD_ID = 0x0002
 DATE_CMD_ID = 0x0003
 TIMER_CONFIG_CMD_ID = 0x0193
@@ -441,6 +450,26 @@ def _parse_heater_state(data: bytes) -> dict[str, Any]:
     }
 
 
+def _parse_solar_state(data: bytes) -> dict[str, Any]:
+    """Parse solar state characteristic (cmd 0x04b2 / BLE 1202)."""
+    if len(data) < 14:
+        return {"type": "solar_state", "raw": data.hex(), "error": "too short"}
+
+    vals = struct.unpack_from("<HHHBBBBBHB", data)
+    modes = {0: "Off", 1: "Auto", 2: "On"}
+    flag = vals[5]
+    return {
+        "type": "solar_state",
+        "solar_roof_temp_c": round(vals[0] / 10.0, 1),
+        "solar_water_temp_c": round(vals[1] / 10.0, 1),
+        "solar_setpoint_c": vals[2],
+        "solar_season": "Summer" if vals[3] != 0 else "Winter",
+        "solar_mode": modes.get(vals[4], f"Unknown({vals[4]})"),
+        "solar_pump_state": bool(flag & 1),
+        "solar_flush_active": bool(flag & 2),
+    }
+
+
 def _parse_timer_capabilities(data: bytes) -> dict[str, Any]:
     """Parse timer capabilities (cmd 0x0190 / BLE 400)."""
     return parse_timer_capabilities(data)
@@ -561,6 +590,8 @@ def parse_data_payload(raw: bytes) -> dict[str, Any]:
         result.update(_parse_controller_date(data))
     elif cmd_id == 0x044E:
         result.update(_parse_heater_state(data))
+    elif cmd_id == 0x04B2:
+        result.update(_parse_solar_state(data))
     elif cmd_id == 0x012C:
         result.update(_parse_lighting_state(data))
     elif cmd_id == 0x0019:
@@ -723,6 +754,7 @@ class HaloWebSocketClient:
             602,
             1100,
             1102,
+            1202,  # 0x04B2 solar state
         ]
 
         LOGGER.debug("Requesting initial catch-all data snapshot...")
@@ -940,6 +972,36 @@ class HaloWebSocketClient:
         await self._send_padded_write(HEATER_CMD_ID, b"\x07", refresh_cmd_ids=(0x0068, 0x044E))
         if self.data.heater_setpoint_c is not None:
             self.data.heater_setpoint_c = max(self.data.heater_setpoint_c - 1, 10)
+
+    async def set_solar_off(self) -> None:
+        await self._send_padded_write(SOLAR_CMD_ID, b"\x01", refresh_cmd_ids=(SOLAR_STATE_CMD_ID,))
+        self.data.solar_mode = "Off"
+
+    async def set_solar_auto(self) -> None:
+        await self._send_padded_write(SOLAR_CMD_ID, b"\x02", refresh_cmd_ids=(SOLAR_STATE_CMD_ID,))
+        self.data.solar_mode = "Auto"
+
+    async def set_solar_on(self) -> None:
+        await self._send_padded_write(SOLAR_CMD_ID, b"\x03", refresh_cmd_ids=(SOLAR_STATE_CMD_ID,))
+        self.data.solar_mode = "On"
+
+    async def set_solar_summer(self) -> None:
+        await self._send_padded_write(SOLAR_CMD_ID, b"\x04", refresh_cmd_ids=(SOLAR_STATE_CMD_ID,))
+        self.data.solar_season = "Summer"
+
+    async def set_solar_winter(self) -> None:
+        await self._send_padded_write(SOLAR_CMD_ID, b"\x05", refresh_cmd_ids=(SOLAR_STATE_CMD_ID,))
+        self.data.solar_season = "Winter"
+
+    async def increase_solar_setpoint(self) -> None:
+        await self._send_padded_write(SOLAR_CMD_ID, b"\x06", refresh_cmd_ids=(SOLAR_STATE_CMD_ID,))
+        if self.data.solar_setpoint_c is not None:
+            self.data.solar_setpoint_c = self.data.solar_setpoint_c + 1
+
+    async def decrease_solar_setpoint(self) -> None:
+        await self._send_padded_write(SOLAR_CMD_ID, b"\x07", refresh_cmd_ids=(SOLAR_STATE_CMD_ID,))
+        if self.data.solar_setpoint_c is not None:
+            self.data.solar_setpoint_c = max(self.data.solar_setpoint_c - 1, 0)
 
     async def sync_controller_clock(self, when: datetime.datetime | None = None) -> None:
         """Sync the controller date and time using the app-confirmed writes."""
@@ -1270,6 +1332,12 @@ class HaloWebSocketClient:
             self.data.heater_water_temp_c = parsed.get("heater_water_temp_c")
             self.data.heater_on = parsed.get("heater_on", False)
             self.data.heater_error = parsed.get("heater_error")
+        elif parsed.get("type") == "solar_state":
+            self.data.solar_setpoint_c = parsed.get("solar_setpoint_c")
+            self.data.solar_mode = parsed.get("solar_mode")
+            self.data.solar_season = parsed.get("solar_season")
+            self.data.solar_pump_state = parsed.get("solar_pump_state", False)
+            self.data.solar_flush_active = parsed.get("solar_flush_active", False)
         elif parsed.get("type") == "lighting_state":
             zone_modes = parsed.get("zone_modes")
             if zone_modes is not None:
