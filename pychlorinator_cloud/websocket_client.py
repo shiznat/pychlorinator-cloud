@@ -1251,6 +1251,8 @@ class HaloWebSocketClient:
             if parsed.get("water_temp_c") is not None and self.data.water_temperature_precise is None:
                 self.data.water_temperature_c = parsed["water_temp_c"]
             self.data.board_temperature_c = parsed.get("board_temp_c")
+            self.data.solar_water_temp_c = parsed.get("solar_water_temp_c")
+            self.data.solar_roof_temp_c = parsed.get("solar_roof_temp_c")
         elif parsed.get("type") == "setpoint":
             self.data.ph_setpoint = parsed.get("ph_setpoint")
             self.data.orp_setpoint = parsed.get("orp_setpoint")
