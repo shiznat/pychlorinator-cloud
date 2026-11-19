@@ -83,6 +83,8 @@ class ChlorinatorLiveData:
 
     # Temperature (cmd 0x0009 — TempCharacteristic)
     board_temperature_c: Optional[float] = None
+    solar_water_temp_c: Optional[float] = None
+    solar_roof_temp_c: Optional[float] = None
 
     # Water volume (cmd 0x0065 — WaterVolumeCharacteristic)
     pool_volume_l: Optional[int] = None
