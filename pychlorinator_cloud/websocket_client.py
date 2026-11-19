@@ -1321,10 +1321,6 @@ class HaloWebSocketClient:
                 self.data.timer_season_source = "setup"
         elif parsed.get("type") == "timer_state":
             self.data.timer_profile_index = parsed.get("profile_index")
-            season = parsed.get("season")
-            if season is not None:
-                self.data.timer_season = season
-                self.data.timer_season_source = "state"
         elif parsed.get("type") == "timer_config":
             slot_index = parsed.get("slot_index")
             timer_type = parsed.get("timer_type")
