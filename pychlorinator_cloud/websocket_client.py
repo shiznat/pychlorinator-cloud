@@ -1003,6 +1003,24 @@ class HaloWebSocketClient:
         if self.data.solar_setpoint_c is not None:
             self.data.solar_setpoint_c = max(self.data.solar_setpoint_c - 1, 0)
 
+    async def set_timer_season(self, season: str) -> None:
+        """Set the active equipment timer season (cmd 0x0191 / 401)."""
+        season_map = {"Winter": 0, "Summer": 1}
+        season_byte = season_map.get(season)
+        if season_byte is None:
+            raise ValueError(f"Invalid timer season: {season}")
+        raw = self.data.raw_payloads.get(0x0191)
+        if raw is None or len(raw) < 10:
+            raise RuntimeError(
+                "Timer setup (0x0191) not yet received from device. "
+                "Wait for initial data fetch to complete."
+            )
+        payload = bytearray(raw[3:10])
+        payload[2] = season_byte
+        await self._send_padded_write(0x0191, bytes(payload), refresh_cmd_ids=(0x0191,))
+        self.data.timer_season = season
+        self.data.timer_season_source = "setup"
+
     async def sync_controller_clock(self, when: datetime.datetime | None = None) -> None:
         """Sync the controller date and time using the app-confirmed writes."""
         local_now = when.astimezone() if when is not None else datetime.datetime.now().astimezone()
